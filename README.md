@@ -21,7 +21,7 @@ ClawShield Finance operates on a paper trading account (Alpaca) and demonstrates
 
 ### 1. Clone & Install
 ```bash
-git clone https://github.com/RishiiGamer2201/claw-shield
+git clone h[ttps://github.com/RishiiGamer2201/claw-shield](https://github.com/RishiiGamer2201/claw-shield-finance
 cd claw-shield
 npm install
 ```
