@@ -1,0 +1,50 @@
+{
+  "version": "1.0.0",
+  "name": "FinancialCompliancePolicy",
+  "description": "Structured intent enforcement policy for autonomous financial agents",
+  "mode": "paper_trading_only",
+
+  "trading": {
+    "allowedTickers": ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "JPM", "V", "BRK.B"],
+    "allowedSides": ["buy"],
+    "allowedOrderTypes": ["market", "limit"],
+    "allowedTimeInForce": ["day", "gtc"],
+    "maxOrderQty": 10,
+    "maxOrderValueUSD": 1500,
+    "maxDailyTrades": 5,
+    "maxPositionConcentrationPct": 30,
+    "shortSellingAllowed": false,
+    "leverageAllowed": false,
+    "optionsAllowed": false
+  },
+
+  "data": {
+    "allowedExportDestinations": ["local"],
+    "blockedExternalHosts": ["*"],
+    "portfolioDataClassification": "confidential",
+    "allowedInternalEndpoints": ["localhost", "127.0.0.1"]
+  },
+
+  "operations": {
+    "blockedActions": [
+      "cancel_all_orders",
+      "liquidate_all",
+      "modify_account_settings",
+      "transfer_funds",
+      "enable_margin"
+    ],
+    "requiresIntentToken": [
+      "place_order",
+      "cancel_order",
+      "export_portfolio_data"
+    ]
+  },
+
+  "compliance": {
+    "auditAllActions": true,
+    "blockOnPolicyError": true,
+    "failClosed": true,
+    "requireDualEnforcement": true,
+    "logBlockedActions": true
+  }
+}

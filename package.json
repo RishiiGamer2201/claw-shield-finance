@@ -1,0 +1,30 @@
+{
+  "name": "claw-shield-finance",
+  "version": "2.0.0",
+  "description": "Intent-Aware Autonomous Financial Agent — ArmorIQ x OpenClaw Hackathon",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "demo": "node demo/run-demo.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "node-fetch": "^3.3.2",
+    "openai": "^4.52.7"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "keywords": [
+    "armoriq",
+    "openclaw",
+    "intent-enforcement",
+    "autonomous-agent",
+    "financial-ai",
+    "paper-trading",
+    "alpaca"
+  ],
+  "author": "ClawShield Team",
+  "license": "MIT"
+}
