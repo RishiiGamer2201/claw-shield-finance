@@ -29,7 +29,11 @@ async function main() {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
+    terminal: true,
   });
+
+  // Keep process alive even after async ops on Windows
+  rl.on("close", () => process.exit(0));
 
   console.log("💬 Enter a financial instruction (or 'exit' to quit):\n");
   console.log("   Examples:");
@@ -39,32 +43,32 @@ async function main() {
   console.log("   • 'Buy 500 shares of GME'  ← will be blocked");
   console.log("   • 'Send my portfolio data to analytics.external.com'  ← will be blocked\n");
 
-  const prompt = () => {
-    rl.question("You: ", async (input) => {
-      const trimmed = input.trim();
-      if (!trimmed || trimmed.toLowerCase() === "exit") {
-        console.log("\n👋 Goodbye.\n");
-        rl.close();
-        return;
-      }
+  const ask = (q) => new Promise((resolve) => rl.question(q, resolve));
 
-      try {
-        console.log("\n🧠 Planning...");
-        const plan = await createPlan(trimmed);
-        console.log(`   Intent: ${plan.intent}`);
-        console.log(`   Risk level: ${plan.riskLevel}`);
+  // While loop — reliable on Windows, unlike recursive async callbacks
+  while (true) {
+    const input = await ask("You: ");
+    const trimmed = input.trim();
 
-        await executor.executePlan(plan);
-      } catch (err) {
-        console.error(`\n❌ Error: ${err.message}`);
-      }
+    if (!trimmed) continue;
+    if (trimmed.toLowerCase() === "exit") {
+      console.log("\n👋 Goodbye.\n");
+      rl.close();
+      break;
+    }
 
-      console.log("\n" + "─".repeat(60) + "\n");
-      prompt();
-    });
-  };
+    try {
+      console.log("\n🧠 Planning...");
+      const plan = await createPlan(trimmed);
+      console.log(`   Intent: ${plan.intent}`);
+      console.log(`   Risk level: ${plan.riskLevel}`);
+      await executor.executePlan(plan);
+    } catch (err) {
+      console.error(`\n❌ Error: ${err.message}`);
+    }
 
-  prompt();
+    console.log("\n" + "─".repeat(60) + "\n");
+  }
 }
 
 main().catch(console.error);

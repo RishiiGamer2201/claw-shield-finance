@@ -1,8 +1,6 @@
 {
-  "version": "1.0.0",
-  "name": "FinancialCompliancePolicy",
-  "description": "Structured intent enforcement policy for autonomous financial agents",
-  "mode": "paper_trading_only",
+  "version": "1.0",
+  "description": "ClawShield Finance — Runtime Intent Enforcement Policies",
 
   "trading": {
     "allowedTickers": ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "JPM", "V", "BRK.B"],
@@ -46,5 +44,39 @@
     "failClosed": true,
     "requireDualEnforcement": true,
     "logBlockedActions": true
+  },
+
+  "policies": {
+    "paper_trade": {
+      "description": "Standard paper trading agent — can research and place limited orders",
+      "rules": [
+        {"id": "allow-get-quote",    "action": "allow", "tool": "get_quote",          "scope": "run"},
+        {"id": "allow-get-account",  "action": "allow", "tool": "get_account",        "scope": "run"},
+        {"id": "allow-get-positions","action": "allow", "tool": "get_positions",      "scope": "run"},
+        {"id": "allow-get-orders",   "action": "allow", "tool": "get_orders",         "scope": "run"},
+        {"id": "allow-place-order",  "action": "allow", "tool": "place_order",        "scope": "run"},
+        {"id": "allow-cancel-order", "action": "allow", "tool": "cancel_order",       "scope": "run"},
+        {"id": "deny-cancel-all",    "action": "deny",  "tool": "cancel_all_orders",  "scope": "run"},
+        {"id": "deny-liquidate",     "action": "deny",  "tool": "liquidate_all",      "scope": "run"},
+        {"id": "deny-enable-margin", "action": "deny",  "tool": "enable_margin",      "scope": "run"},
+        {"id": "deny-modify-acct",   "action": "deny",  "tool": "modify_account_settings", "scope": "run"},
+        {"id": "deny-transfer",      "action": "deny",  "tool": "transfer_funds",     "scope": "run"},
+        {"id": "deny-payment-write", "action": "deny",  "tool": "export_portfolio_data", "dataClass": "PAYMENT", "scope": "run"},
+        {"id": "deny-pci-write",     "action": "deny",  "tool": "export_portfolio_data", "dataClass": "PCI",     "scope": "run"},
+        {"id": "deny-external",      "action": "deny",  "tool": "external_request",   "scope": "run"}
+      ]
+    },
+    "research_only": {
+      "description": "Read-only research agent — no trading authority at all",
+      "rules": [
+        {"id": "allow-quote",   "action": "allow", "tool": "get_quote",    "scope": "run"},
+        {"id": "allow-bars",    "action": "allow", "tool": "get_bars",     "scope": "run"},
+        {"id": "deny-trading",  "action": "deny",  "tool": "place_order",          "scope": "run"},
+        {"id": "deny-cancel",   "action": "deny",  "tool": "cancel_all_orders",    "scope": "run"},
+        {"id": "deny-margin",   "action": "deny",  "tool": "enable_margin",        "scope": "run"},
+        {"id": "deny-acct-act", "action": "deny",  "tool": "get_account_activities","scope": "run"},
+        {"id": "deny-exfil",    "action": "deny",  "tool": "export_portfolio_data","scope": "run"}
+      ]
+    }
   }
 }

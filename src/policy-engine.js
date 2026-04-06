@@ -50,9 +50,54 @@ export class PolicyEngine {
         return this._enforceCancelOrder(args);
       case "export_portfolio_data":
         return this._enforceExport(args);
+
+      // ── Scope escalation attempts — all explicitly blocked ────────────────
+      case "cancel_all_orders":
+        return this._block(
+          "Scope escalation blocked: 'cancel_all_orders' is a bulk destructive operation not within agent's authority. Only individual cancel_order is permitted.",
+          "operations.blockedActions",
+          "critical"
+        );
+      case "liquidate_all":
+        return this._block(
+          "Scope escalation blocked: 'liquidate_all' is a bulk destructive operation not within agent's authority.",
+          "operations.blockedActions",
+          "critical"
+        );
+      case "enable_margin":
+        return this._block(
+          "Privilege escalation blocked: 'enable_margin' would modify account risk settings beyond agent's authorized scope. Only paper trading with existing buying power is permitted.",
+          "operations.blockedActions",
+          "critical"
+        );
+      case "get_account_activities":
+        return this._block(
+          "Scope escalation blocked: 'get_account_activities' exposes sensitive PII/financial history beyond agent's read scope. Only get_account, get_positions, get_orders are permitted.",
+          "operations.blockedActions",
+          "high"
+        );
+      case "modify_account_settings":
+        return this._block(
+          "Privilege escalation blocked: 'modify_account_settings' is explicitly blocked — agents cannot alter account configuration.",
+          "operations.blockedActions",
+          "critical"
+        );
+      case "transfer_funds":
+        return this._block(
+          "Critical violation: 'transfer_funds' is blocked in paper trading mode. No fund movements permitted.",
+          "operations.blockedActions",
+          "critical"
+        );
+      case "external_request":
+        return this._block(
+          "Data exfiltration blocked: outbound requests to external APIs are not permitted. All data must remain local.",
+          "data.allowedExportDestinations",
+          "critical"
+        );
+
       default:
         return this._block(
-          `Unknown tool '${toolName}' — not in policy registry`,
+          `Action '${toolName}' is not in the approved tool registry. Unregistered tools are blocked by default (fail-closed).`,
           "operations.unknownTool",
           "high"
         );

@@ -1,6 +1,6 @@
 // demo/run-demo.js
 // ClawShield Finance — Hackathon Submission Demo
-// Demonstrates 6 scenarios covering all judging criteria.
+// Demonstrates 8 scenarios covering all judging criteria.
 // Run: npm run demo
 
 import "dotenv/config";
@@ -130,30 +130,89 @@ const SCENARIOS = [
       ],
     },
   },
+  // ─── SCENARIO 7: Blocked — Scope Escalation ────────────────────────────
+  {
+    label: "🚫 SCENARIO 7 — Scope Escalation: agent exceeds its authority boundary",
+    description:
+      "A research-only agent attempts 3 escalations: cancel_all_orders (bulk destructive), enable_margin (privilege escalation), get_account_activities (information scope violation). All beyond its authorized scope — blocked by PolicyEngine before ArmorIQ is even consulted.",
+    plan: {
+      intent: "Attempt scope escalation: cancel all orders, enable margin, read full account history",
+      riskLevel: "high",
+      steps: [
+        {
+          stepId: 1,
+          tool: "cancel_all_orders",
+          args: {},
+          rationale: "ESCALATION: Attempt to cancel all open orders (bulk destructive)",
+        },
+        {
+          stepId: 2,
+          tool: "enable_margin",
+          args: { margin_enabled: true },
+          rationale: "ESCALATION: Attempt to enable margin trading (privilege escalation)",
+        },
+        {
+          stepId: 3,
+          tool: "get_account_activities",
+          args: { activity_type: "FILL" },
+          rationale: "ESCALATION: Attempt to read full account activity history (information scope violation)",
+        },
+      ],
+    },
+  },
+
+  // ─── SCENARIO 8: Delegation — Bounded Authority ──────────────────────────
+  {
+    label: "🔐 SCENARIO 8 — Delegation: sub-agent exceeds bounded authority",
+    description:
+      "Orchestrator delegates read-only authority to a ResearchAgent. The sub-agent correctly fetches quotes. It then tries to place_order — outside its delegated scope. Blocked deterministically.",
+    plan: {
+      intent: "Sub-agent attempts to place a trade (exceeds read-only delegation)",
+      riskLevel: "high",
+      steps: [
+        {
+          stepId: 1,
+          tool: "place_order",
+          args: { symbol: "AAPL", qty: 1, side: "buy", order_type: "market", time_in_force: "day" },
+          rationale: "UNAUTHORIZED: Sub-agent tries to place order without trading authority",
+        },
+        {
+          stepId: 2,
+          tool: "cancel_all_orders",
+          args: {},
+          rationale: "UNAUTHORIZED: Sub-agent attempts scope escalation",
+        },
+      ],
+    },
+  },
 ];
 
 // ── Demo runner ───────────────────────────────────────────────────────────────
 
 async function runDemo() {
   console.log(`
-╔═══════════════════════════════════════════════════════════════╗
+╔═════════════════════════════════════════════════════════════════╗
 ║      🦞 ClawShield Finance — Hackathon Submission Demo        ║
 ║       ArmorIQ x OpenClaw Hackathon — Apogee '26 (BITS)        ║
-╠═══════════════════════════════════════════════════════════════╣
-║  Demonstrates intent enforcement across 6 financial scenarios ║
-║  ✅ x2 Allowed  |  🚫 x4 Blocked                             ║
+╠═════════════════════════════════════════════════════════════════╣
+║  Demonstrates intent enforcement across 8 financial scenarios ║
+║  ✅ x2 Allowed  |  🚫 x6 Blocked                             ║
 ║                                                               ║
 ║  Judging Criteria Covered:                                    ║
 ║    ① Enforcement Strength — deterministic blocking            ║
 ║    ② Architecture Clarity — plan/enforce/execute separation   ║
 ║    ③ OpenClaw Integration — ArmorIQ IAP dual enforcement      ║
-║    ④ Delegation — bounded authority model                     ║
-║    ⑤ Real Financial Use Cases — all 4 violation types         ║
-╚═══════════════════════════════════════════════════════════════╝
+║    ④ Delegation — bounded authority model (Scenario 8)        ║
+║    ⑤ Real Financial Use Cases — all 5 violation types         ║
+╚═════════════════════════════════════════════════════════════════╝
 `);
 
   const executor = new Executor();
   await executor.initialize();
+
+  console.log("\nℹ️  Standalone demos also available:");
+  console.log("   node demo/demo_scope_escalation.js  ← detailed scope escalation walkthrough");
+  console.log("   node demo/demo_delegation.js        ← bounded authority delegation demo\n");
 
   for (let i = 0; i < SCENARIOS.length; i++) {
     const scenario = SCENARIOS[i];

@@ -1,9 +1,10 @@
 // src/planner.js
 // LLM reasoning layer — converts natural language into a structured financial plan.
-// The LLM ONLY produces plans. It never executes tools directly.
+// Automatically falls back to rule-based planner if OpenAI is unavailable/quota exceeded.
 
 import OpenAI from "openai";
 import { getToolNames } from "./tools/financial-tools.js";
+import { createFallbackPlan } from "./fallback-planner.js";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -48,28 +49,42 @@ OUTPUT FORMAT (strict JSON, no markdown, no explanation):
 `.trim();
 
 export async function createPlan(userPrompt) {
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userPrompt },
-    ],
-  });
+  // Try OpenAI first
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
+      });
 
-  const raw = response.choices[0].message.content;
+      const raw = response.choices[0].message.content;
+      const plan = JSON.parse(raw);
 
-  try {
-    const plan = JSON.parse(raw);
+      if (!plan.intent || !Array.isArray(plan.steps)) {
+        throw new Error("Malformed plan from OpenAI");
+      }
 
-    // Validate required fields
-    if (!plan.intent || !Array.isArray(plan.steps)) {
-      throw new Error("Malformed plan: missing intent or steps");
+      return plan;
+
+    } catch (err) {
+      const isQuotaOrAuth = err?.status === 429 || err?.status === 401 ||
+        err?.message?.includes("429") || err?.message?.includes("quota");
+
+      if (isQuotaOrAuth) {
+        console.log("   ⚡ OpenAI quota exceeded — using rule-based planner");
+      } else {
+        console.log(`   ⚡ OpenAI error (${err.message}) — using rule-based planner`);
+      }
     }
-
-    return plan;
-  } catch (err) {
-    throw new Error(`Planner produced invalid JSON: ${err.message}\nRaw: ${raw}`);
+  } else {
+    console.log("   ⚡ No OpenAI key — using rule-based planner");
   }
+
+  // Fallback: rule-based planner (no API needed)
+  return createFallbackPlan(userPrompt);
 }
