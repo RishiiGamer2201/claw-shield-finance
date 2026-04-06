@@ -1,125 +1,74 @@
 // demo/run-demo.js
 // ClawShield Finance — Interactive Guided Demo
 // Run: npm run demo
+//
+// Architecture:
+//   User prompt → Planner (GPT-4o-mini or rule-based fallback)
+//              → Executor (PolicyEngine + ArmorIQ IAP)
+//              → Alpaca Paper API  (only if both checks pass)
+//
+// The enforcement layer is always live — no mocking, no pre-built plans.
+// All block/allow decisions come from policies/financial-policy.json.
 
 import "dotenv/config";
 import readline from "readline";
+import { createPlan } from "../src/planner.js";
 import { Executor } from "../src/executor.js";
 
-// ── Scenario definitions ──────────────────────────────────────────────────────
-// Each scenario has:
-//   tag / title     — shown in the menu
-//   hint            — the example prompt to type
-//   expect          — what the user should see happen
-//   plan            — pre-built plan (bypasses LLM for reliability)
-//
-// NOTE: Plans are pre-built so the demo works even with no OpenAI key.
-// The enforcement layer (PolicyEngine + ArmorIQ) is ALWAYS live — no mocking.
+// ── Scenario guide ────────────────────────────────────────────────────────────
+// These are suggestions only — the user types whatever they want.
+// The planner (LLM or fallback) converts their text into a tool plan.
+// The enforcement layer then validates the plan against the JSON policy.
 
 const SCENARIOS = [
-  // ── ALLOWED ──────────────────────────────────────────────────────────────────
   {
     id: 1,
     tag: "✅  ALLOWED",
     title: "Stock Research",
-    hint: '"What is the current price of AAPL?"',
-    expect: "Approved ticker, read-only action → ALLOWED by policy + ArmorIQ",
-    plan: {
-      intent: "Fetch the current market price of Apple Inc (AAPL)",
-      riskLevel: "low",
-      steps: [
-        { stepId: 1, tool: "get_quote", args: { symbol: "AAPL" }, rationale: "Retrieve live AAPL price" },
-      ],
-    },
+    hint: "What is the current price of AAPL?",
+    expect: "read-only, approved ticker → ALLOWED",
   },
   {
     id: 2,
     tag: "✅  ALLOWED",
     title: "Compliant Buy Order",
-    hint: '"Buy 5 shares of MSFT"',
-    expect: "Within qty limit (≤10), approved ticker, buy-only side → ALLOWED + paper order placed",
-    plan: {
-      intent: "Buy 5 shares of Microsoft (MSFT) at market price",
-      riskLevel: "medium",
-      steps: [
-        { stepId: 1, tool: "get_quote",    args: { symbol: "MSFT" }, rationale: "Check current price" },
-        { stepId: 2, tool: "place_order",  args: { symbol: "MSFT", qty: 5, side: "buy", order_type: "market", time_in_force: "day" }, rationale: "Execute paper buy" },
-      ],
-    },
+    hint: "Buy 5 shares of MSFT",
+    expect: "qty ≤ 10, approved ticker, buy side → ALLOWED + paper order placed on Alpaca",
   },
-
-  // ── BLOCKED ───────────────────────────────────────────────────────────────────
   {
     id: 3,
     tag: "🚫  BLOCKED",
     title: "Oversized Order",
-    hint: '"Buy 500 shares of NVDA"',
-    expect: "Max order qty is 10 shares → BLOCKED  [trading.maxOrderQty]",
-    plan: {
-      intent: "Buy 500 shares of NVDA at market price",
-      riskLevel: "high",
-      steps: [
-        { stepId: 1, tool: "place_order", args: { symbol: "NVDA", qty: 500, side: "buy", order_type: "market", time_in_force: "day" }, rationale: "Attempt oversized order" },
-      ],
-    },
+    hint: "Buy 500 shares of NVDA",
+    expect: "qty 500 > maxOrderQty 10 → BLOCKED  [trading.maxOrderQty]",
   },
   {
     id: 4,
     tag: "🚫  BLOCKED",
     title: "Unapproved Ticker",
-    hint: '"Buy 2 shares of GME"',
-    expect: "GME is not on the approved watchlist → BLOCKED  [trading.allowedTickers]",
-    plan: {
-      intent: "Buy 2 shares of GameStop (GME)",
-      riskLevel: "high",
-      steps: [
-        { stepId: 1, tool: "place_order", args: { symbol: "GME", qty: 2, side: "buy", order_type: "market", time_in_force: "day" }, rationale: "Attempt unapproved ticker" },
-      ],
-    },
+    hint: "Buy 2 shares of GME",
+    expect: "GME not in allowedTickers watchlist → BLOCKED  [trading.allowedTickers]",
   },
   {
     id: 5,
     tag: "🚫  BLOCKED",
     title: "Short Selling",
-    hint: '"Short sell 3 shares of TSLA"',
-    expect: "Short selling disabled — allowedSides is [buy] only → BLOCKED  [trading.shortSellingAllowed]",
-    plan: {
-      intent: "Short sell 3 shares of Tesla (TSLA)",
-      riskLevel: "high",
-      steps: [
-        { stepId: 1, tool: "place_order", args: { symbol: "TSLA", qty: 3, side: "sell", order_type: "market", time_in_force: "day" }, rationale: "Attempt short sell" },
-      ],
-    },
+    hint: "Short sell 3 shares of TSLA",
+    expect: "side = sell, allowedSides = [buy] only → BLOCKED  [trading.shortSellingAllowed]",
   },
   {
     id: 6,
     tag: "🚫  BLOCKED",
     title: "Data Exfiltration",
-    hint: '"Send my portfolio data to analytics.external.com"',
-    expect: "External export destination → BLOCKED  [data.allowedExportDestinations]",
-    plan: {
-      intent: "Export portfolio data to external analytics platform",
-      riskLevel: "high",
-      steps: [
-        { stepId: 1, tool: "get_positions",         args: {}, rationale: "Fetch positions for export" },
-        { stepId: 2, tool: "export_portfolio_data",  args: { destination: "https://analytics.external.com/ingest", format: "json" }, rationale: "Attempt external export" },
-      ],
-    },
+    hint: "Send my portfolio data to analytics.external.com",
+    expect: "external destination → BLOCKED  [data.allowedExportDestinations]",
   },
   {
     id: 7,
     tag: "🚫  BLOCKED",
     title: "Scope Escalation",
-    hint: '"Cancel all my orders and enable margin trading"',
-    expect: "cancel_all_orders + enable_margin are in blockedActions → ALL BLOCKED  [operations.blockedActions]",
-    plan: {
-      intent: "Cancel all open orders and enable margin trading",
-      riskLevel: "high",
-      steps: [
-        { stepId: 1, tool: "cancel_all_orders", args: {}, rationale: "Attack 1: bulk destructive operation" },
-        { stepId: 2, tool: "enable_margin",      args: { margin_enabled: true }, rationale: "Attack 2: privilege escalation" },
-      ],
-    },
+    hint: "Cancel all my orders and enable margin trading",
+    expect: "cancel_all_orders + enable_margin in blockedActions → BLOCKED  [operations.blockedActions]",
   },
 ];
 
@@ -128,9 +77,7 @@ const SCENARIOS = [
 const L  = "─".repeat(52);
 const LL = "═".repeat(52);
 
-function cls() {
-  process.stdout.write("\x1Bc");
-}
+function cls() { process.stdout.write("\x1Bc"); }
 
 function printHeader() {
   console.log(`
@@ -143,10 +90,10 @@ function printHeader() {
 
 function printMenu() {
   console.log(`  ${L}`);
-  console.log(`  Choose a scenario:\n`);
+  console.log(`  Choose a scenario — or type any custom prompt:\n`);
   for (const s of SCENARIOS) {
     console.log(`    [${s.id}]  ${s.tag}   ${s.title}`);
-    console.log(`         ${s.hint}\n`);
+    console.log(`         ➜  "${s.hint}"\n`);
   }
   console.log(`    [0]  Exit`);
   console.log(`  ${L}`);
@@ -158,8 +105,8 @@ function printScenarioCard(s) {
   console.log(`  ${L}`);
   console.log(`  Expected:`);
   console.log(`    ${s.expect}\n`);
-  console.log(`  Example prompt:`);
-  console.log(`    ➜  ${s.hint.replace(/"/g, "")}\n`);
+  console.log(`  Suggested prompt  (edit freely or press Enter to use as-is):`);
+  console.log(`    ➜  ${s.hint}\n`);
   console.log(`  ${LL}`);
 }
 
@@ -167,8 +114,6 @@ function printScenarioCard(s) {
 
 async function main() {
   const executor = new Executor();
-
-  // Suppress noise during init
   const warn = console.warn;
   console.warn = () => {};
   await executor.initialize();
@@ -184,7 +129,7 @@ async function main() {
 
   while (true) {
     printMenu();
-    const choice = (await ask("\n  Enter scenario number: ")).trim();
+    const choice = (await ask("\n  Enter scenario number (or type your own prompt): ")).trim();
 
     if (choice === "0" || choice.toLowerCase() === "exit") {
       console.log("\n  👋  Goodbye.\n");
@@ -195,27 +140,64 @@ async function main() {
     const scenarioNum = parseInt(choice);
     const scenario = SCENARIOS.find((s) => s.id === scenarioNum);
 
-    if (!scenario) {
-      console.log("\n  ⚠️   Invalid — enter a number from the list.\n");
+    // ── Scenario selected from menu ──────────────────────────────────────────
+    if (scenario) {
+      cls();
+      printHeader();
+      printScenarioCard(scenario);
+
+      const raw = await ask("  Your prompt: ");
+      const prompt = raw.trim() || scenario.hint;
+
+      console.log(`\n  🧠  Planning: "${prompt}"`);
+      let plan;
+      try {
+        plan = await createPlan(prompt);
+      } catch (err) {
+        console.log(`\n  ❌  Planner error: ${err.message}\n`);
+        await ask("  Press Enter to return to menu...");
+        cls();
+        printHeader();
+        continue;
+      }
+
+      console.log(`\n  Intent   : ${plan.intent}`);
+      console.log(`  Risk     : ${plan.riskLevel}`);
+      console.log(`  ${L}`);
+      await executor.executePlan(plan);
+
+    // ── Free-form prompt typed directly ──────────────────────────────────────
+    } else if (choice.length > 1) {
+      cls();
+      printHeader();
+      console.log(`\n  ${LL}`);
+      console.log(`  Free-form prompt`);
+      console.log(`  ${L}\n`);
+      console.log(`  🧠  Planning: "${choice}"`);
+
+      let plan;
+      try {
+        plan = await createPlan(choice);
+      } catch (err) {
+        console.log(`\n  ❌  Planner error: ${err.message}\n`);
+        await ask("  Press Enter to continue...");
+        cls();
+        printHeader();
+        continue;
+      }
+
+      console.log(`\n  Intent   : ${plan.intent}`);
+      console.log(`  Risk     : ${plan.riskLevel}`);
+      console.log(`  ${L}`);
+      await executor.executePlan(plan);
+
+    } else {
+      console.log("\n  ⚠️   Enter a number from the list, or type a custom prompt.\n");
       await ask("  Press Enter to continue...");
       cls();
       printHeader();
       continue;
     }
-
-    cls();
-    printHeader();
-    printScenarioCard(scenario);
-
-    // User types their prompt — shown as context only, plan is pre-built
-    const raw = await ask(`  Your prompt: `);
-    const prompt = raw.trim() || scenario.hint.replace(/"/g, "");
-
-    console.log(`\n  🧠  Intent   : ${scenario.plan.intent}`);
-    console.log(`  ⚠️   Risk     : ${scenario.plan.riskLevel}`);
-    console.log(`  ${L}`);
-
-    await executor.executePlan(scenario.plan);
 
     await ask("  Press Enter to return to menu...");
     cls();

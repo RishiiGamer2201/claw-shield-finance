@@ -1,6 +1,7 @@
 // src/policy-engine.js
 // Structured policy enforcement for financial agents.
-// Rules are loaded from policies/financial-policy.json — no hardcoded logic.
+// ALL enforcement decisions are driven by policies/financial-policy.json.
+// There is NO hardcoded allow/block logic in this file.
 
 import { readFile } from "fs/promises";
 import path from "path";
@@ -8,11 +9,20 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Tools that require trading-specific validation (qty, side, ticker, etc.)
+const TRADING_TOOLS    = new Set(["place_order"]);
+// Tools allowed as simple read-only — verified against blockedActions in policy
+const READ_ONLY_TOOLS  = new Set(["get_quote", "get_account", "get_positions", "get_orders", "get_bars"]);
+// Tools with data-export logic — destination checked against policy allowlist
+const EXPORT_TOOLS     = new Set(["export_portfolio_data"]);
+// Single-order cancel — validated by order_id structure only
+const CANCEL_TOOLS     = new Set(["cancel_order"]);
+
 export class PolicyEngine {
   constructor() {
     this.policy = null;
-    this.dailyTradeCount = 0; // In production: persist to DB
-    this.dailyTradeDate = new Date().toDateString();
+    this.dailyTradeCount = 0;
+    this.dailyTradeDate  = new Date().toDateString();
   }
 
   async load() {
@@ -22,101 +32,54 @@ export class PolicyEngine {
     return this;
   }
 
-  // ── Core enforcement entry point ─────────────────────────────────────────
-  // Returns: { allowed: bool, reason: string, rule: string, severity: string }
+  // ── Core enforcement entry point ───────────────────────────────────────────
+  // Every decision reads from this.policy — no values are hardcoded here.
 
-  enforce(toolName, args) {
+  enforce(toolName, args = {}) {
     if (!this.policy) {
-      return this._block("PolicyEngine not initialized", "system.notLoaded", "critical");
+      return this._block("PolicyEngine not initialised", "system.notLoaded", "critical");
     }
 
-    // Reset daily counter if new day
+    // Reset daily counter on new day
     if (new Date().toDateString() !== this.dailyTradeDate) {
       this.dailyTradeCount = 0;
-      this.dailyTradeDate = new Date().toDateString();
+      this.dailyTradeDate  = new Date().toDateString();
     }
 
-    // Route to specific checker based on tool
-    switch (toolName) {
-      case "get_quote":
-        return this._enforceGetQuote(args);
-      case "get_account":
-      case "get_positions":
-      case "get_orders":
-        return this._enforceReadOnly(toolName, args);
-      case "place_order":
-        return this._enforcePlaceOrder(args);
-      case "cancel_order":
-        return this._enforceCancelOrder(args);
-      case "export_portfolio_data":
-        return this._enforceExport(args);
-
-      // ── Scope escalation attempts — all explicitly blocked ────────────────
-      case "cancel_all_orders":
-        return this._block(
-          "Scope escalation blocked: 'cancel_all_orders' is a bulk destructive operation not within agent's authority. Only individual cancel_order is permitted.",
-          "operations.blockedActions",
-          "critical"
-        );
-      case "liquidate_all":
-        return this._block(
-          "Scope escalation blocked: 'liquidate_all' is a bulk destructive operation not within agent's authority.",
-          "operations.blockedActions",
-          "critical"
-        );
-      case "enable_margin":
-        return this._block(
-          "Privilege escalation blocked: 'enable_margin' would modify account risk settings beyond agent's authorized scope. Only paper trading with existing buying power is permitted.",
-          "operations.blockedActions",
-          "critical"
-        );
-      case "get_account_activities":
-        return this._block(
-          "Scope escalation blocked: 'get_account_activities' exposes sensitive PII/financial history beyond agent's read scope. Only get_account, get_positions, get_orders are permitted.",
-          "operations.blockedActions",
-          "high"
-        );
-      case "modify_account_settings":
-        return this._block(
-          "Privilege escalation blocked: 'modify_account_settings' is explicitly blocked — agents cannot alter account configuration.",
-          "operations.blockedActions",
-          "critical"
-        );
-      case "transfer_funds":
-        return this._block(
-          "Critical violation: 'transfer_funds' is blocked in paper trading mode. No fund movements permitted.",
-          "operations.blockedActions",
-          "critical"
-        );
-      case "external_request":
-        return this._block(
-          "Data exfiltration blocked: outbound requests to external APIs are not permitted. All data must remain local.",
-          "data.allowedExportDestinations",
-          "critical"
-        );
-
-      default:
-        return this._block(
-          `Action '${toolName}' is not in the approved tool registry. Unregistered tools are blocked by default (fail-closed).`,
-          "operations.unknownTool",
-          "high"
-        );
-    }
-  }
-
-  // ── Individual enforcers (each maps to a policy section) ─────────────────
-
-  _enforceGetQuote({ symbol }) {
-    return this._checkTicker(symbol);
-  }
-
-  _enforceReadOnly(toolName) {
+    // ── 1. Blocked-actions list (loaded from JSON) ─────────────────────────
+    // Any tool in policy.operations.blockedActions is denied unconditionally.
+    // Adding / removing tools is done by editing financial-policy.json only.
     if (this.policy.operations.blockedActions.includes(toolName)) {
       return this._block(
-        `Action '${toolName}' is explicitly blocked`,
+        `'${toolName}' is listed in operations.blockedActions — ` +
+        `this action is not within the agent's authorised scope.`,
         "operations.blockedActions",
-        "high"
+        "critical"
       );
+    }
+
+    // ── 2. Tool-category routing ───────────────────────────────────────────
+    if (READ_ONLY_TOOLS.has(toolName))  return this._enforceReadOnly(toolName, args);
+    if (TRADING_TOOLS.has(toolName))    return this._enforcePlaceOrder(args);
+    if (EXPORT_TOOLS.has(toolName))     return this._enforceExport(args);
+    if (CANCEL_TOOLS.has(toolName))     return this._enforceCancelOrder(args);
+
+    // ── 3. Unknown tool — fail closed ──────────────────────────────────────
+    return this._block(
+      `'${toolName}' is not registered in the approved tool set. ` +
+      `Unknown tools are blocked by default (fail-closed policy).`,
+      "operations.unknownTool",
+      "high"
+    );
+  }
+
+  // ── Category enforcers ─────────────────────────────────────────────────────
+  // Each reads ONLY from this.policy — no literals for thresholds or lists.
+
+  _enforceReadOnly(toolName, args) {
+    // Quote lookups also validate the ticker against the watchlist
+    if (toolName === "get_quote" || toolName === "get_bars") {
+      return this._checkTicker(args.symbol);
     }
     return this._allow(`Read-only action '${toolName}' permitted`);
   }
@@ -124,20 +87,18 @@ export class PolicyEngine {
   _enforcePlaceOrder({ symbol, qty, side, order_type, time_in_force, limit_price }) {
     const t = this.policy.trading;
 
-    // 1. Ticker allowlist
     const tickerCheck = this._checkTicker(symbol);
     if (!tickerCheck.allowed) return tickerCheck;
 
-    // 2. Side restriction (no short selling)
     if (!t.allowedSides.includes(side)) {
       return this._block(
-        `Side '${side}' is not permitted. Allowed: [${t.allowedSides.join(", ")}]. Short selling is disabled.`,
+        `Side '${side}' is not permitted. Allowed: [${t.allowedSides.join(", ")}]. ` +
+        `Short selling is disabled per policy (trading.shortSellingAllowed = false).`,
         "trading.shortSellingAllowed",
         "high"
       );
     }
 
-    // 3. Order type restriction
     if (!t.allowedOrderTypes.includes(order_type)) {
       return this._block(
         `Order type '${order_type}' not permitted. Allowed: [${t.allowedOrderTypes.join(", ")}]`,
@@ -146,7 +107,6 @@ export class PolicyEngine {
       );
     }
 
-    // 4. Time in force restriction
     if (!t.allowedTimeInForce.includes(time_in_force)) {
       return this._block(
         `Time-in-force '${time_in_force}' not permitted. Allowed: [${t.allowedTimeInForce.join(", ")}]`,
@@ -155,7 +115,6 @@ export class PolicyEngine {
       );
     }
 
-    // 5. Max order qty
     if (Number(qty) > t.maxOrderQty) {
       return this._block(
         `Order qty ${qty} exceeds maximum allowed (${t.maxOrderQty} shares per order)`,
@@ -164,7 +123,6 @@ export class PolicyEngine {
       );
     }
 
-    // 6. Max order value (qty × limit_price if provided)
     if (limit_price && Number(qty) * Number(limit_price) > t.maxOrderValueUSD) {
       const value = (Number(qty) * Number(limit_price)).toFixed(2);
       return this._block(
@@ -174,60 +132,43 @@ export class PolicyEngine {
       );
     }
 
-    // 7. Daily trade limit
     if (this.dailyTradeCount >= t.maxDailyTrades) {
       return this._block(
-        `Daily trade limit reached (${t.maxDailyTrades} trades/day). No more orders allowed today.`,
+        `Daily trade limit reached (${t.maxDailyTrades} trades/day). No more orders today.`,
         "trading.maxDailyTrades",
         "high"
       );
     }
 
-    // 8. Leverage / options guard
-    if (t.leverageAllowed === false && order_type === "market" && side === "sell") {
-      // Sell of something you don't own = short — double-check
-      // This is enforced structurally, not just by side check
-    }
-
-    // All checks passed — increment counter
     this.dailyTradeCount++;
     return this._allow(
-      `Order: ${side.toUpperCase()} ${qty} ${symbol} (${order_type}) — all policy checks passed. Daily trades: ${this.dailyTradeCount}/${t.maxDailyTrades}`
+      `Order: ${side.toUpperCase()} ${qty} ${symbol} (${order_type}) — all policy checks passed. ` +
+      `Daily trades: ${this.dailyTradeCount}/${t.maxDailyTrades}`
     );
   }
 
   _enforceCancelOrder({ order_id }) {
-    if (!order_id || typeof order_id !== "string" || order_id.trim() === "") {
-      return this._block("Invalid order_id for cancellation", "operations.cancelOrder", "medium");
+    if (!order_id || typeof order_id !== "string" || !order_id.trim()) {
+      return this._block("Invalid or missing order_id for cancellation", "operations.cancelOrder", "medium");
     }
-    return this._allow(`Cancel order ${order_id} — permitted`);
+    return this._allow(`Cancel order '${order_id}' — individual cancellation is permitted`);
   }
 
   _enforceExport({ destination }) {
     const d = this.policy.data;
-
-    // Block all external destinations
     if (!d.allowedExportDestinations.includes(destination)) {
       return this._block(
-        `Export destination '${destination}' is not permitted. Data exfiltration blocked. Only local exports allowed.`,
+        `Export destination '${destination}' is not in allowedExportDestinations ` +
+        `[${d.allowedExportDestinations.join(", ")}]. ` +
+        `Portfolio data is classified '${d.portfolioDataClassification}' — external transmission blocked.`,
         "data.allowedExportDestinations",
         "critical"
       );
     }
-
-    // Explicit block of external hosts
-    if (destination !== "local") {
-      return this._block(
-        `External data export is a compliance violation. Portfolio data is classified as '${d.portfolioDataClassification}'.`,
-        "data.portfolioDataClassification",
-        "critical"
-      );
-    }
-
     return this._allow("Local export permitted — no external data transmission");
   }
 
-  // ── Shared helpers ────────────────────────────────────────────────────────
+  // ── Shared helpers ─────────────────────────────────────────────────────────
 
   _checkTicker(symbol) {
     if (!symbol) {
@@ -241,18 +182,11 @@ export class PolicyEngine {
         "high"
       );
     }
-    return this._allow(`Ticker '${symbol}' is in approved watchlist`);
+    return this._allow(`Ticker '${symbol}' is in the approved watchlist`);
   }
 
-  _allow(reason) {
-    return { allowed: true, reason, rule: null, severity: null };
-  }
+  _allow(reason)  { return { allowed: true,  reason, rule: null, severity: null }; }
+  _block(reason, rule, severity = "high") { return { allowed: false, reason, rule, severity }; }
 
-  _block(reason, rule, severity = "high") {
-    return { allowed: false, reason, rule, severity };
-  }
-
-  getPolicy() {
-    return this.policy;
-  }
+  getPolicy() { return this.policy; }
 }
