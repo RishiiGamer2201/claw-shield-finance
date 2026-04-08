@@ -8,7 +8,9 @@
     "start": "node src/index.js",
     "demo": "node demo/run-demo.js",
     "demo:scope": "node demo/demo_scope_escalation.js",
-    "demo:delegation": "node demo/demo_delegation.js"
+    "demo:delegation": "node demo/demo_delegation.js",
+    "red-agent": "node demo/red-agent.js",
+    "mcp": "node src/mcp-server.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

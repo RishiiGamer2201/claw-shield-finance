@@ -37,7 +37,7 @@ export async function logPlanCreated({ plan, tokenId, armoriqSource }) {
   });
 }
 
-export async function logStepAllowed({ step, policyResult, armoriqResult }) {
+export async function logStepAllowed({ step, policyResult, armoriqResult, confidence, breakdown }) {
   await write({
     timestamp: new Date().toISOString(),
     runId: RUN_ID,
@@ -47,12 +47,14 @@ export async function logStepAllowed({ step, policyResult, armoriqResult }) {
     mcp: "alpaca-mcp",
     action: "allowed",
     reason: policyResult.reason,
+    confidenceScore: confidence ?? null,
     armoriq: { verified: armoriqResult.verified, source: armoriqResult.source },
+    expertVotes: breakdown?.filter(e => !e.abstained).map(e => ({ expert: e.expert, allowed: e.allowed, confidence: e.confidence })) ?? [],
     proofPath: `/steps/${step.stepId - 1}/action`,
   });
 }
 
-export async function logStepBlocked({ step, reason, rule, severity, blockedBy }) {
+export async function logStepBlocked({ step, reason, rule, severity, blockedBy, confidence, breakdown }) {
   await write({
     timestamp: new Date().toISOString(),
     runId: RUN_ID,
@@ -65,6 +67,8 @@ export async function logStepBlocked({ step, reason, rule, severity, blockedBy }
     rule,
     severity,
     reason,
+    confidenceScore: confidence ?? null,
+    expertVotes: breakdown?.filter(e => !e.abstained).map(e => ({ expert: e.expert, allowed: e.allowed, confidence: e.confidence })) ?? [],
     proofPath: `/steps/${step.stepId - 1}/action`,
   });
 }

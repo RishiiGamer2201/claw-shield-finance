@@ -1,6 +1,9 @@
 {
-  "version": "1.0",
-  "description": "ClawShield Finance — Runtime Intent Enforcement Policies",
+  "version": "2.0",
+  "description": "ClawShield Finance v2 — Cognitive Intent Enforcement Policies (MoE + Validation Layer)",
+
+  "confidenceThreshold": 0.70,
+  "validatorWeights": { "policyConsensus": 0.40, "armoriqProof": 0.35, "intentAlignment": 0.25 },
 
   "trading": {
     "allowedTickers": ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "JPM", "V", "BRK.B"],
